@@ -2,7 +2,7 @@
 
 A tray app that keeps your "show this icon in the system tray" choices across app updates.
 
-Windows 11 stores tray visibility per executable path in `HKCU\Control Panel\NotifyIconSettings\<id>`
+Windows stores tray visibility per executable path in `HKCU\Control Panel\NotifyIconSettings\<id>`
 (`ExecutablePath`, `IsPromoted`). Apps whose install path contains a version (Store apps like Spotify,
 Squirrel-style `app-1.2.3` folders, …) get a fresh entry after every update and the icon falls back to hidden.
 
@@ -12,14 +12,36 @@ copies that value. Entries with an explicit `IsPromoted` are never changed.
 
 ## Build
 
-Requires Visual Studio 2026 (v145 toolset) with the Windows SDK; nothing else.
+Requires Visual Studio 2026 (v145 toolset) with the Windows SDK. NuGet packages (Nerdbank.GitVersioning,
+WiX Toolset) are restored automatically by VS/Rider; on the command line pass `-restore`:
 
 ```
-msbuild BetterTaskbarMemory.slnx -p:Configuration=Release -p:Platform=x64
+msbuild BetterTaskbarMemory.slnx -restore -p:RestorePackagesConfig=true -p:Configuration=Release -p:Platform=x64
 bin\x64\Release\Tests.exe
 ```
 
-Output: `bin\x64\Release\BetterTaskbarMemory.exe` (static CRT, no redistributables needed).
+Output in `bin\x64\Release\`:
+- `BetterTaskbarMemory.exe` (static CRT, no redistributables needed)
+- `BetterTaskbarMemory.msi` (installer)
+
+## Versioning
+
+Versions come from [Nerdbank.GitVersioning](https://github.com/dotnet/Nerdbank.GitVersioning): `version.json`
+holds major.minor, and the git height (commits since `version.json` last changed) becomes the build number.
+The exe's version resource is generated at build time; `nbgv get-version` shows the current version.
+Bump major/minor by editing `version.json` (or `nbgv set-version 1.1`).
+
+## Installer
+
+`installer/` is a [WiX Toolset](https://wixtoolset.org) v7 project producing a per-user MSI (no UAC prompt):
+
+- installs to `%LOCALAPPDATA%\Programs\BetterTaskbarMemory` with a Start Menu shortcut;
+- enables "Start with Windows" and offers to launch the app when setup finishes;
+- closes a running instance on upgrade/uninstall; uninstall also removes the autostart entry and
+  `HKCU\Software\BetterTaskbarMemory` (the log folder is kept).
+
+The MSI version is taken from the exe, so every commit produces an upgradable installer.
+If you turn off "Start with Windows" in the app, repairing the MSI turns it back on.
 
 ## Use
 
@@ -41,3 +63,8 @@ Back up before the first real run: `reg export "HKCU\Control Panel\NotifyIconSet
 | `src/Watcher.*` | `RegNotifyChangeKeyValue` worker thread with debounce |
 | `src/TrayIcon.*`, `src/main.cpp` | tray icon, menu (`App::BuildMenuItems` is where new features plug in) |
 | `res/make-icon.ps1` | regenerates `res/app.ico` |
+| `installer/` | WiX v7 MSI project |
+
+## License
+
+[MIT](LICENSE)
