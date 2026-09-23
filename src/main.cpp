@@ -1,0 +1,403 @@
+#include <windows.h>
+#include <windowsx.h>
+#include <commctrl.h>
+#include <shellapi.h>
+
+#include <cwchar>
+#include <deque>
+#include <functional>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "../res/resource.h"
+#include "FixPass.h"
+#include "Log.h"
+#include "Settings.h"
+#include "TrayIcon.h"
+#include "Watcher.h"
+
+namespace
+{
+constexpr wchar_t kAppName[] = L"BetterTaskbarMemory";
+constexpr wchar_t kWindowClass[] = L"BetterTaskbarMemory.Window";
+constexpr wchar_t kInstanceMutex[] = L"Local\\BetterTaskbarMemory.SingleInstance";
+constexpr wchar_t kSettingPaused[] = L"Paused";
+constexpr wchar_t kSettingNotifications[] = L"Notifications";
+
+constexpr UINT WM_TRAY_CALLBACK = WM_APP + 1;
+constexpr UINT WM_FIXES_APPLIED = WM_APP + 2;
+constexpr UINT kTrayIconId = 1;
+constexpr UINT kFirstMenuCommandId = 100;
+constexpr size_t kMaxRecentFixes = 20;
+
+// A tray menu entry. New features add entries in App::BuildMenuItems().
+struct MenuItem
+{
+    std::wstring label;                                           // empty = separator
+    std::function<void()> invoke;
+    std::function<bool()> checked;
+    std::function<std::vector<std::wstring>()> submenuLines;      // read-only submenu
+};
+
+struct FixesPayload
+{
+    std::vector<PlannedFix> fixes;
+    bool manual = false;
+};
+
+struct RecentFix
+{
+    SYSTEMTIME time{};
+    PlannedFix fix;
+};
+
+std::wstring FileNameOf(const std::wstring& path)
+{
+    size_t separator = path.find_last_of(L"\\/");
+    return separator == std::wstring::npos ? path : path.substr(separator + 1);
+}
+
+std::wstring VisibilityText(uint32_t isPromoted)
+{
+    return isPromoted ? L"shown" : L"hidden";
+}
+
+class App
+{
+public:
+    bool Initialize(HINSTANCE instance);
+    int Run();
+
+private:
+    static LRESULT CALLBACK WndProcThunk(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
+    LRESULT WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
+
+    void BuildMenuItems();
+    void ShowMenu(POINT anchor);
+    void OnFixesApplied(const FixesPayload& payload);
+    void UpdateTooltip();
+    [[nodiscard]] std::vector<std::wstring> RecentFixLines() const;
+
+    HINSTANCE instance_ = nullptr;
+    HWND hwnd_ = nullptr;
+    UINT taskbarCreatedMessage_ = 0;
+    HICON icon_ = nullptr;
+    std::unique_ptr<TrayIcon> tray_;
+    std::unique_ptr<Watcher> watcher_;
+    std::vector<MenuItem> menuItems_;
+    std::deque<RecentFix> recentFixes_;
+    bool paused_ = false;
+    bool notifications_ = true;
+};
+
+bool App::Initialize(HINSTANCE instance)
+{
+    instance_ = instance;
+    paused_ = ReadBoolSetting(kSettingPaused, false);
+    notifications_ = ReadBoolSetting(kSettingNotifications, true);
+    taskbarCreatedMessage_ = RegisterWindowMessageW(L"TaskbarCreated");
+
+    WNDCLASSEXW windowClass{};
+    windowClass.cbSize = sizeof(windowClass);
+    windowClass.lpfnWndProc = WndProcThunk;
+    windowClass.hInstance = instance;
+    windowClass.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(IDI_APP));
+    windowClass.lpszClassName = kWindowClass;
+    if (!RegisterClassExW(&windowClass))
+        return false;
+
+    // A hidden top-level window (not message-only): it must receive the TaskbarCreated broadcast.
+    if (!CreateWindowExW(0, kWindowClass, kAppName, WS_OVERLAPPED, 0, 0, 0, 0, nullptr, nullptr, instance, this))
+        return false;
+    ChangeWindowMessageFilterEx(hwnd_, taskbarCreatedMessage_, MSGFLT_ALLOW, nullptr);
+
+    if (FAILED(LoadIconMetric(instance, MAKEINTRESOURCEW(IDI_APP), LIM_SMALL, &icon_)))
+        icon_ = LoadIconW(nullptr, IDI_APPLICATION);
+
+    tray_ = std::make_unique<TrayIcon>(hwnd_, kTrayIconId, WM_TRAY_CALLBACK, icon_);
+    UpdateTooltip();
+    tray_->Add();
+    BuildMenuItems();
+
+    HWND hwnd = hwnd_;
+    watcher_ = std::make_unique<Watcher>([hwnd](std::vector<PlannedFix> fixes, const bool manual) {
+        auto payload = std::make_unique<FixesPayload>(FixesPayload{ .fixes = std::move(fixes), .manual = manual });
+        if (PostMessageW(hwnd, WM_FIXES_APPLIED, 0, reinterpret_cast<LPARAM>(payload.get())))
+            static_cast<void>(payload.release());   // the window now owns it
+    });
+    watcher_->SetPaused(paused_);
+    watcher_->Start();
+
+    Log(paused_ ? L"Started (paused)" : L"Started");
+    return true;
+}
+
+int App::Run()
+{
+    MSG message;
+    while (GetMessageW(&message, nullptr, 0, 0) > 0)
+    {
+        TranslateMessage(&message);
+        DispatchMessageW(&message);
+    }
+    Log(L"Exited");
+    return static_cast<int>(message.wParam);
+}
+
+void App::BuildMenuItems()
+{
+    menuItems_ = {
+        { .label = L"Fix now", .invoke = [this] { watcher_->RequestScan(); } },
+        { .label = L"Recent fixes", .submenuLines = [this] { return RecentFixLines(); } },
+        {},
+        { .label = L"Pause watching",
+          .invoke = [this] {
+              paused_ = !paused_;
+              WriteBoolSetting(kSettingPaused, paused_);
+              watcher_->SetPaused(paused_);
+              UpdateTooltip();
+              Log(paused_ ? L"Paused" : L"Resumed");
+          },
+          .checked = [this] { return paused_; } },
+        { .label = L"Show notifications",
+          .invoke = [this] {
+              notifications_ = !notifications_;
+              WriteBoolSetting(kSettingNotifications, notifications_);
+          },
+          .checked = [this] { return notifications_; } },
+        { .label = L"Start with Windows",
+          .invoke = [] { SetStartWithWindows(!IsStartWithWindowsEnabled()); },
+          .checked = [] { return IsStartWithWindowsEnabled(); } },
+        {},
+        { .label = L"Open log",
+          .invoke = [] {
+              const std::wstring path = LogFilePath().wstring();
+              ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+          } },
+        { .label = L"Exit", .invoke = [this] { DestroyWindow(hwnd_); } },
+    };
+}
+
+void App::ShowMenu(POINT anchor)
+{
+    HMENU menu = CreatePopupMenu();
+    for (size_t i = 0; i < menuItems_.size(); ++i)
+    {
+        const MenuItem& item = menuItems_[i];
+        if (item.label.empty())
+        {
+            AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        }
+        else if (item.submenuLines)
+        {
+            HMENU submenu = CreatePopupMenu();
+            std::vector<std::wstring> lines = item.submenuLines();
+            if (lines.empty())
+                AppendMenuW(submenu, MF_STRING | MF_GRAYED, 0, L"(none yet)");
+            for (const std::wstring& line : lines)
+                AppendMenuW(submenu, MF_STRING, 0, line.c_str());
+            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(submenu), item.label.c_str());
+        }
+        else
+        {
+            UINT flags = MF_STRING;
+            if (item.checked && item.checked())
+                flags |= MF_CHECKED;
+            AppendMenuW(menu, flags, kFirstMenuCommandId + i, item.label.c_str());
+        }
+    }
+
+    // Required so the menu closes when the user clicks elsewhere.
+    SetForegroundWindow(hwnd_);
+    UINT flags = TPM_RIGHTBUTTON | TPM_BOTTOMALIGN |
+                 (GetSystemMetrics(SM_MENUDROPALIGNMENT) ? TPM_RIGHTALIGN : TPM_LEFTALIGN);
+    TrackPopupMenuEx(menu, flags, anchor.x, anchor.y, hwnd_, nullptr);
+    PostMessageW(hwnd_, WM_NULL, 0, 0);
+    DestroyMenu(menu);
+}
+
+void App::OnFixesApplied(const FixesPayload& payload)
+{
+    SYSTEMTIME now;
+    GetLocalTime(&now);
+    for (const PlannedFix& fix : payload.fixes)
+    {
+        recentFixes_.push_front({ .time = now, .fix = fix });
+        if (recentFixes_.size() > kMaxRecentFixes)
+            recentFixes_.pop_back();
+    }
+
+    if (payload.fixes.empty())
+    {
+        if (payload.manual)
+            tray_->ShowBalloon(kAppName, L"Nothing to fix.");
+        return;
+    }
+    if (!notifications_ && !payload.manual)
+        return;
+
+    std::wstring text;
+    for (const PlannedFix& fix : payload.fixes)
+    {
+        if (!text.empty())
+            text += L"\n";
+        text += FileNameOf(fix.targetPath) + L": " + VisibilityText(fix.isPromoted);
+    }
+    tray_->ShowBalloon(L"Restored tray icon settings", text);
+}
+
+void App::UpdateTooltip()
+{
+    tray_->SetTooltip(paused_ ? L"Better Taskbar Memory (paused)" : L"Better Taskbar Memory");
+}
+
+std::vector<std::wstring> App::RecentFixLines() const
+{
+    std::vector<std::wstring> lines;
+    for (const RecentFix& recent : recentFixes_)
+    {
+        wchar_t time[16];
+        swprintf_s(time, L"%02u:%02u", recent.time.wHour, recent.time.wMinute);
+        lines.push_back(std::wstring(time) + L"  " + FileNameOf(recent.fix.targetPath) + L" \x2192 " +
+                        VisibilityText(recent.fix.isPromoted));
+    }
+    return lines;
+}
+
+LRESULT CALLBACK App::WndProcThunk(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    if (message == WM_NCCREATE)
+    {
+        auto* app = static_cast<App*>(reinterpret_cast<CREATESTRUCTW*>(lParam)->lpCreateParams);
+        app->hwnd_ = hwnd;
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(app));
+    }
+    if (auto* app = reinterpret_cast<App*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA)))
+        return app->WndProc(hwnd, message, wParam, lParam);
+    return DefWindowProcW(hwnd, message, wParam, lParam);
+}
+
+LRESULT App::WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    if (message == taskbarCreatedMessage_ && taskbarCreatedMessage_ != 0)
+    {
+        // Explorer restarted: the icon has to be added again.
+        if (tray_)
+            tray_->Add();
+        return 0;
+    }
+
+    switch (message)
+    {
+    case WM_TRAY_CALLBACK:
+        switch (LOWORD(lParam))
+        {
+        case WM_CONTEXTMENU:
+        case NIN_SELECT:
+        case NIN_KEYSELECT:
+            ShowMenu({ .x = GET_X_LPARAM(wParam), .y = GET_Y_LPARAM(wParam) });
+            break;
+        }
+        return 0;
+
+    case WM_FIXES_APPLIED:
+    {
+        std::unique_ptr<FixesPayload> payload(reinterpret_cast<FixesPayload*>(lParam));
+        OnFixesApplied(*payload);
+        return 0;
+    }
+
+    case WM_COMMAND:
+    {
+        const UINT id = LOWORD(wParam);
+        if (id >= kFirstMenuCommandId && id - kFirstMenuCommandId < menuItems_.size())
+        {
+            // Copy: the handler may rebuild menuItems_.
+            auto invoke = menuItems_[id - kFirstMenuCommandId].invoke;
+            if (invoke)
+                invoke();
+        }
+        return 0;
+    }
+
+    case WM_DESTROY:
+        if (watcher_)
+            watcher_->Stop();
+        if (tray_)
+            tray_->Remove();
+        PostQuitMessage(0);
+        return 0;
+    }
+    return DefWindowProcW(hwnd, message, wParam, lParam);
+}
+
+// --dry-run: report what would change, write nothing.
+int RunDryRun()
+{
+    FixPassResult result = RunFixPass(true);
+
+    std::wstring report;
+    if (!result.ok)
+        report = L"Cannot read HKCU\\Control Panel\\NotifyIconSettings.\n";
+    else if (result.fixes.empty())
+        report = L"Nothing to fix.\n";
+    for (const PlannedFix& fix : result.fixes)
+    {
+        report += L"Would set IsPromoted=" + std::to_wstring(fix.isPromoted) + L" (" + VisibilityText(fix.isPromoted) +
+                  L") on " + fix.targetId + L"\n    " + fix.targetPath + L"\n    copied from " + fix.sourceId + L": " +
+                  fix.sourcePath + L"\n";
+    }
+
+    if (AttachConsole(ATTACH_PARENT_PROCESS))
+    {
+        report = L"\n" + report;
+        HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
+        DWORD written = 0;
+        if (!WriteConsoleW(out, report.c_str(), static_cast<DWORD>(report.size()), &written, nullptr))
+        {
+            const std::string utf8 = ToUtf8(report);
+            WriteFile(out, utf8.data(), static_cast<DWORD>(utf8.size()), &written, nullptr);
+        }
+    }
+    else
+    {
+        MessageBoxW(nullptr, report.c_str(), L"BetterTaskbarMemory \x2014 dry run", MB_OK | MB_ICONINFORMATION);
+    }
+    return result.ok ? 0 : 1;
+}
+
+bool HasArgument(const wchar_t* expected)
+{
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    bool found = false;
+    for (int i = 1; argv && i < argc; ++i)
+        found = found || _wcsicmp(argv[i], expected) == 0;
+    LocalFree(argv);
+    return found;
+}
+} // namespace
+
+int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ PWSTR, _In_ int)
+{
+    if (HasArgument(L"--dry-run"))
+        return RunDryRun();
+
+    HANDLE mutex = CreateMutexW(nullptr, FALSE, kInstanceMutex);
+    if (GetLastError() == ERROR_ALREADY_EXISTS)
+    {
+        MessageBoxW(nullptr, L"BetterTaskbarMemory is already running in the system tray.", kAppName, MB_OK | MB_ICONINFORMATION);
+        return 0;
+    }
+
+    int exitCode = 1;
+    {
+        App app;
+        if (app.Initialize(instance))
+            exitCode = app.Run();
+    }
+    if (mutex)
+        CloseHandle(mutex);
+    return exitCode;
+}
