@@ -8,6 +8,10 @@
     <File Path="README.md" />
     <File Path="version.json" />
   </Folder>
+  <Folder Name="/Solution Items/.github/workflows/">
+    <File Path=".github/workflows/build.yml" />
+    <File Path=".github/workflows/release.yml" />
+  </Folder>
   <Project Path="BetterTaskbarMemory.vcxproj" />
   <Project Path="installer/Installer.wixproj" Type="B7DD6F7E-DEF8-4E67-B5B7-07EF123DB6F0" />
   <Project Path="Tests.vcxproj" />

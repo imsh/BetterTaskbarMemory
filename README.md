@@ -43,6 +43,18 @@ Bump major/minor by editing `version.json` (or `nbgv set-version 1.1`).
 The MSI version is taken from the exe, so every commit produces an upgradable installer.
 If you turn off "Start with Windows" in the app, repairing the MSI turns it back on.
 
+## CI and releases
+
+Both workflows build on the `windows-2025-vs2026` runner.
+
+- **`.github/workflows/build.yml`** runs on every push to `main` and every pull request (or manually). It builds,
+  runs the tests, and uploads `BetterTaskbarMemory-<version>-x64.msi` and a portable zip (exe + license) as
+  workflow artifacts.
+- **`.github/workflows/release.yml`** is triggered manually: Actions → Release → Run workflow on `main`. It runs
+  `build.yml`, then publishes a GitHub release tagged `v<major.minor.height>` with those files and notes
+  generated from the commits since the previous release. Re-running on the same commit fails because the tag
+  already exists.
+
 ## Use
 
 - `BetterTaskbarMemory.exe --dry-run` prints what it would change and exits without writing.
