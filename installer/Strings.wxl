@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Show the version in every installer dialog's title bar, e.g. "Better Taskbar Memory 1.0.5.12345 Setup".
+     These replace WixUI's overridable "[ProductName] Setup" titles. -->
+<WixLocalization Culture="en-us" xmlns="http://wixtoolset.org/schemas/v4/wxl">
+  <String Id="AdvancedWelcomeEulaDlg_Title" Value="[ProductName] [ProductVersion] Setup" />
+  <String Id="BrowseDlg_Title" Value="[ProductName] [ProductVersion] Setup" />
+  <String Id="CancelDlg_Title" Value="[ProductName] [ProductVersion] Setup" />
+  <String Id="CustomizeDlg_Title" Value="[ProductName] [ProductVersion] Setup" />
+  <String Id="DiskCostDlg_Title" Value="[ProductName] [ProductVersion] Setup" />
+  <String Id="ErrorDlg_Title" Value="[ProductName] [ProductVersion] Setup" />
+  <String Id="ExitDialog_Title" Value="[ProductName] [ProductVersion] Setup" />
+  <String Id="FatalError_Title" Value="[ProductName] [ProductVersion] Setup" />
+  <String Id="FeaturesDlg_Title" Value="[ProductName] [ProductVersion] Setup" />
+  <String Id="FilesInUse_Title" Value="[ProductName] [ProductVersion] Setup" />
+  <String Id="InstallDirDlg_Title" Value="[ProductName] [ProductVersion] Setup" />
+  <String Id="InstallScopeDlg_Title" Value="[ProductName] [ProductVersion] Setup" />
+  <String Id="InvalidDirDlg_Title" Value="[ProductName] [ProductVersion] Setup" />
+  <String Id="LicenseAgreementDlg_Title" Value="[ProductName] [ProductVersion] Setup" />
+  <String Id="MaintenanceTypeDlg_Title" Value="[ProductName] [ProductVersion] Setup" />
+  <String Id="MaintenanceWelcomeDlg_Title" Value="[ProductName] [ProductVersion] Setup" />
+  <String Id="MsiRMFilesInUse_Title" Value="[ProductName] [ProductVersion] Setup" />
+  <String Id="OutOfDiskDlg_Title" Value="[ProductName] [ProductVersion] Setup" />
+  <String Id="OutOfRbDiskDlg_Title" Value="[ProductName] [ProductVersion] Setup" />
+  <String Id="PrepareDlg_Title" Value="[ProductName] [ProductVersion] Setup" />
+  <String Id="ProgressDlg_Title" Value="[ProductName] [ProductVersion] Setup" />
+  <String Id="ResumeDlg_Title" Value="[ProductName] [ProductVersion] Setup" />
+  <String Id="SetupTypeDlg_Title" Value="[ProductName] [ProductVersion] Setup" />
+  <String Id="UserExit_Title" Value="[ProductName] [ProductVersion] Setup" />
+  <String Id="VerifyReadyDlg_Title" Value="[ProductName] [ProductVersion] Setup" />
+  <String Id="WaitForCostingDlg_Title" Value="[ProductName] [ProductVersion] Setup" />
+  <String Id="WelcomeDlg_Title" Value="[ProductName] [ProductVersion] Setup" />
+  <String Id="WelcomeEulaDlg_Title" Value="[ProductName] [ProductVersion] Setup" />
+</WixLocalization>

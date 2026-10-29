@@ -22,7 +22,7 @@ bin\x64\Release\Tests.exe
 
 Output in `bin\x64\Release\`:
 - `BetterTaskbarMemory.exe` (static CRT, no redistributables needed)
-- `BetterTaskbarMemory.msi` (installer)
+- `en-us\BetterTaskbarMemory.msi` (installer)
 
 ## Versioning
 

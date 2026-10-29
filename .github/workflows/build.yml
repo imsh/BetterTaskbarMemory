@@ -52,7 +52,7 @@ jobs:
         run: |
           $version = '${{ steps.version.outputs.version }}'
           New-Item -ItemType Directory -Force artifacts | Out-Null
-          Copy-Item bin\x64\Release\BetterTaskbarMemory.msi "artifacts\BetterTaskbarMemory-$version-x64.msi"
+          Copy-Item bin\x64\Release\en-us\BetterTaskbarMemory.msi "artifacts\BetterTaskbarMemory-$version-x64.msi"
           Compress-Archive -Path bin\x64\Release\BetterTaskbarMemory.exe, LICENSE -DestinationPath "artifacts\BetterTaskbarMemory-$version-x64-portable.zip"
 
       - name: Upload artifacts
