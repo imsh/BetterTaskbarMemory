@@ -137,6 +137,7 @@ private:
     std::deque<RecentFix> recentFixes_;
     bool paused_ = false;
     bool notifications_ = true;
+    bool shuttingDown_ = false;   // between WM_QUERYENDSESSION and a cancelled WM_ENDSESSION
 };
 
 bool App::Initialize(HINSTANCE instance)
@@ -353,9 +354,36 @@ LRESULT App::WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
     case WM_FIXES_APPLIED:
     {
         std::unique_ptr<FixesPayload> payload(reinterpret_cast<FixesPayload*>(lParam));
-        OnFixesApplied(*payload);
+        // Shell_NotifyIconW blocks on Explorer, which may be busy shutting down.
+        if (!shuttingDown_)
+            OnFixesApplied(*payload);
         return 0;
     }
+
+    // Answer at once and stay off Explorer's back until the session ends: Explorer saves
+    // NotifyIconSettings on exit, and fixing it now would only stall this thread. The scan
+    // at the next startup catches up.
+    case WM_QUERYENDSESSION:
+        shuttingDown_ = true;
+        if (watcher_)
+            watcher_->SetPaused(true);
+        return TRUE;
+
+    case WM_ENDSESSION:
+        if (wParam)
+        {
+            // The process is terminated after this returns; no WM_DESTROY follows.
+            if (watcher_)
+                watcher_->Stop();
+            Log(L"Session ending");
+        }
+        else
+        {
+            shuttingDown_ = false;
+            if (watcher_)
+                watcher_->SetPaused(paused_);
+        }
+        return 0;
 
     case WM_COMMAND:
     {
@@ -373,7 +401,7 @@ LRESULT App::WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
     case WM_DESTROY:
         if (watcher_)
             watcher_->Stop();
-        if (tray_)
+        if (tray_ && !shuttingDown_)
             tray_->Remove();
         PostQuitMessage(0);
         return 0;
